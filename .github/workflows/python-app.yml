@@ -29,17 +29,40 @@ jobs:
         pip install argparse
         if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
         sudo apt-get update && sudo apt-get install -y make
+    # 获得仓库中的ReleaseTag
+    - name: Set Version
+      if: steps.up-version.outputs.status == 'success' || steps.up-version.outputs.pstatus == 'success'
+      id: set-version
+      run: |
+        echo "::set-output name=version::$(cat ReleaseTag | head -n1)"
+        echo "::set-output name=pre_version::$(cat PreReleaseTag | head -n1)"
+        echo "ReleaseTag=$(cat ReleaseTag | head -n1)"
+        echo "PreReleaseTag=$(cat PreReleaseTag | head -n1)"
+        echo "::set-output name=status::success"
     - name: Make bird config
       run: |
         make
-    - name: Public Release
-      id: create_release
-      uses: actions/create-release@latest
+    - name: Upload firmware to release
+      uses: softprops/action-gh-release@v1
+      if: steps.tag.outputs.status == 'success' && !cancelled()
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
-        tag_name: v${{steps.version.outputs.value}}
-        release_name: v${{steps.version.outputs.value}}
-        body: ${{steps.description.outputs.content}}
-        draft: false
-        prerelease: false
+        tag_name: ${{ steps.tag.outputs.release_tag }}
+        body_path: release.txt
+        files: ./*.*
+
+    - name: Delete workflow runs
+      uses: GitRML/delete-workflow-runs@main
+      with:
+        retain_days: 1
+        keep_minimum_runs: 3
+
+    - name: Remove old Releases
+      uses: dev-drprasad/delete-older-releases@v0.1.0
+      if: env.UPLOAD_RELEASE == 'true' && !cancelled()
+      with:
+        keep_latest: 3
+        delete_tags: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN
