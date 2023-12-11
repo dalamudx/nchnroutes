@@ -1,0 +1,44 @@
+name: Auto-generate and upload routes
+
+on:
+  schedule:
+    - cron: "0 */3 * * *" # Run every 3 hour at UTC
+  watch:
+    types: [started]
+
+jobs:
+  build:
+    runs-on: ubuntu-20.04
+
+    steps:
+    - name: Checkout Repository
+      uses: actions/checkout@v3
+
+    - name: Build nchnroutes
+      run: |
+        make
+
+    - name: upload to release
+      uses: softprops/action-gh-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: latest
+        files: |
+          ./routes4.conf
+          ./routes6.conf
+
+    - name: Delete workflow runs
+      uses: GitRML/delete-workflow-runs@main
+      with:
+        retain_days: 2
+        keep_minimum_runs: 6
+
+    - name: Remove old Releases
+      uses: dev-drprasad/delete-older-releases@v0.1.0
+      if: env.UPLOAD_RELEASE == 'true' && !cancelled()
+      with:
+        keep_latest: 6
+        delete_tags: true
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
