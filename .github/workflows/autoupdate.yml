@@ -2,7 +2,7 @@ name: Auto-generate and upload routes
 
 on:
   schedule:
-    - cron: ""0 */2 * *" # Run every 2 hour at UTC
+    - cron: "0 */2 * *" # Run every 2 hour at UTC
   watch:
     types: [started]
 
