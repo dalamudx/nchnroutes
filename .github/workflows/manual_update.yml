@@ -10,7 +10,8 @@ on:
 jobs:
   build:
     runs-on: ubuntu-20.04
-
+    permissions:
+      actions: write
     steps:
     - name: Checkout Repository
       uses: actions/checkout@v3
