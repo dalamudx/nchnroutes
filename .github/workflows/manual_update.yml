@@ -34,7 +34,7 @@ jobs:
           ./routes6.conf
 
     - name: Delete workflow runs
-      uses: GitRML/delete-workflow-runs@main
+      uses: dalamudx/delete-workflow-runs@main
       with:
         retain_days: 2
         keep_minimum_runs: 6
