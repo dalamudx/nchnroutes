@@ -45,7 +45,7 @@ If you want to run this automatically, you can first edit `Makefile` and uncomme
 at the end, then:
 
 ```
-sudo crontab -e
+sudo crontab -e 
 ```
 
 and add `0 0 * * 0 make -C /path/to/nchnroutes` to the file.
