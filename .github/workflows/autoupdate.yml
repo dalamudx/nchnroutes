@@ -1,44 +1,260 @@
+#############################################################################
+#                                                                           #
+#                     NCHNROUTES 自动更新工作流                              #
+#                                                                           #
+#############################################################################
+
 name: Auto-generate and upload routes
 
+# 触发条件配置
+# -----------------------------------------------------------------------------
 on:
+  # 定时触发 - 每天凌晨2点自动运行
   schedule:
     - cron: "0 2 * * *"
+
+  # 仓库互动触发 - 当有人对仓库标星时触发
   watch:
     types: [started]
 
+  # 代码变更触发 - 当主分支关键文件有变更时触发
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'produce.py'    # 路由生成脚本
+      - 'Makefile'      # 构建配置
+
+  # 手动触发 - 允许通过GitHub Actions界面手动触发
+  workflow_dispatch:
+
+# 任务配置
+# -----------------------------------------------------------------------------
 jobs:
+  # 主构建任务
+  # ---------------------------------------------------------------------------
   build:
-    runs-on: ubuntu-20.04
+    name: 📦 Build and Publish Routes
+    runs-on: ubuntu-22.04
 
     steps:
-    - name: Checkout Repository
+    # 第一阶段: 环境准备
+    # -------------------------------------------------------------------------
+    - name: 📥 Checkout Repository
       uses: actions/checkout@v3
+      with:
+        fetch-depth: 1  # 只获取最新的提交，加快克隆速度
 
-    - name: Build nchnroutes
-      env: 
-        PASS_IPS: ${{secrets.PASS_IPS}}
+    - name: 💾 Cache IP Lists
+      uses: actions/cache@v3
+      id: cache-ip-lists
+      with:
+        # 缓存IP列表文件，避免重复下载
+        path: |
+          delegated-apnic-latest
+          china_ip_list.txt
+          ipv4-address-space.csv
+        key: ${{ runner.os }}-ip-lists-${{ github.run_id }}
+        restore-keys: |
+          ${{ runner.os }}-ip-lists-
+
+    - name: 🔍 Validate Environment
       run: |
-        make
+        # 检查环境变量是否设置
+        if [ -z "$PASS_IPS" ]; then
+          echo "⚠️ Warning: PASS_IPS environment variable is not set. No IPs will be excluded."
+        else
+          echo "✅ PASS_IPS is set. IPs will be excluded according to configuration."
+        fi
 
-    - name: upload to release
+        # 安装BIRD以进行语法检查
+        sudo apt install bird2 -y
+
+        # 显示Python版本
+        echo "🐍 Python version:"
+        python3 --version
+
+      env:
+        PASS_IPS: ${{ secrets.PASS_IPS }}
+
+    # 第二阶段: 构建路由表
+    # -------------------------------------------------------------------------
+    - name: 🔨 Build nchnroutes
+      id: build
+      env:
+        PASS_IPS: ${{ secrets.PASS_IPS }}
+      run: |
+        echo "🚀 Starting build process..."
+
+        # 添加重试机制，提高构建可靠性
+        max_retries=3
+        retry_count=0
+
+        while [ $retry_count -lt $max_retries ]; do
+          echo "🔄 Build attempt $(($retry_count+1))/$max_retries"
+
+          if make; then
+            echo "✅ Build successful!"
+            break
+          else
+            retry_count=$((retry_count+1))
+            if [ $retry_count -lt $max_retries ]; then
+              echo "⚠️ Build failed, retrying ($retry_count/$max_retries)..."
+              sleep 10
+            else
+              echo "❌ Build failed after $max_retries attempts."
+              exit 1
+            fi
+          fi
+        done
+
+        # 记录路由条目数量和构建时间，用于后续步骤
+        echo "📊 Counting routes..."
+        IPV4_COUNT=$(grep -c "route" routes4.conf || echo "0")
+        IPV6_COUNT=$(grep -c "route" routes6.conf || echo "0")
+        echo "📈 IPv4 Routes: $IPV4_COUNT"
+        echo "📈 IPv6 Routes: $IPV6_COUNT"
+
+        # 输出到GitHub Actions环境变量
+        echo "ipv4_count=$IPV4_COUNT" >> $GITHUB_OUTPUT
+        echo "ipv6_count=$IPV6_COUNT" >> $GITHUB_OUTPUT
+        echo "build_date=$(date +'%Y-%m-%d')" >> $GITHUB_OUTPUT
+        echo "build_time=$(date +'%H-%M-%S')" >> $GITHUB_OUTPUT
+
+    # 第三阶段: 验证生成的路由表
+    # -------------------------------------------------------------------------
+    - name: 🔎 Validate Generated Routes
+      id: validate
+      run: |
+        echo "🧪 Starting validation process..."
+
+        # 检查文件是否存在
+        if [ ! -f "routes4.conf" ] || [ ! -f "routes6.conf" ]; then
+          echo "❌ Error: Route files not generated!"
+          exit 1
+        fi
+
+        # 检查文件大小是否合理
+        IPV4_COUNT=${{ steps.build.outputs.ipv4_count }}
+        IPV6_COUNT=${{ steps.build.outputs.ipv6_count }}
+
+        echo "📊 IPv4 routes count: $IPV4_COUNT"
+        echo "📊 IPv6 routes count: $IPV6_COUNT"
+
+        # 初始化警告信息变量
+        WARNINGS=""
+
+        # 允许有10%的浮动范围
+        if [ $IPV4_COUNT -lt 9900 ] || [ $IPV4_COUNT -gt 15000 ]; then
+          WARNING_MSG="⚠️ Warning: IPv4 routes count ($IPV4_COUNT) is outside the expected range (9900-13200)"
+          echo "$WARNING_MSG"
+          WARNINGS="${WARNINGS}${WARNING_MSG}\n"
+        fi
+
+        if [ $IPV6_COUNT -lt 12600 ] || [ $IPV6_COUNT -gt 16000 ]; then
+          WARNING_MSG="⚠️ Warning: IPv6 routes count ($IPV6_COUNT) is outside the expected range (12600-15400)"
+          echo "$WARNING_MSG"
+          WARNINGS="${WARNINGS}${WARNING_MSG}\n"
+        fi
+
+        # 检查格式是否正确
+        echo "🔍 Checking route format..."
+        if ! grep -q "route .* via \".*\";" routes4.conf; then
+          echo "❌ Error: IPv4 routes format is incorrect!"
+          exit 1
+        fi
+
+        if ! grep -q "route .* via \".*\";" routes6.conf; then
+          echo "❌ Error: IPv6 routes format is incorrect!"
+          exit 1
+        fi
+        # 尝试使用BIRD语法检查（如果可用）
+        if command -v bird >/dev/null 2>&1; then
+          echo "🔍 Performing BIRD syntax check..."
+          if ! bird -c test.conf -p; then
+            WARNING_MSG="⚠️ Warning: BIRD syntax check failed for routes"
+            echo "$WARNING_MSG"
+            WARNINGS="${WARNINGS}${WARNING_MSG}\n"
+          fi
+        else
+          echo "ℹ️ BIRD not available, skipping syntax check"
+        fi
+
+        # 记录性能指标
+        echo "⏱️ Measuring performance..."
+        START_TIME=$(date +%s)
+        wc -l routes4.conf routes6.conf
+        END_TIME=$(date +%s)
+        ELAPSED=$((END_TIME - START_TIME))
+        echo "⏱️ Performance: Processed $(($IPV4_COUNT + $IPV6_COUNT)) routes in ${ELAPSED} seconds"
+
+        # 输出警告信息，供后续步骤使用
+        echo "warnings<<EOF" >> $GITHUB_OUTPUT
+        echo -e "$WARNINGS" >> $GITHUB_OUTPUT
+        echo "EOF" >> $GITHUB_OUTPUT
+
+        echo "✅ Routes validation completed!"
+
+    # 第四阶段: 创建发布内容
+    # -------------------------------------------------------------------------
+    - name: 📝 Create Release Notes
+      run: |
+        echo "📋 Creating release notes..."
+        cat > release_notes.md << EOF
+        # 🌐 nchnroutes Latest Routes
+
+        This is the latest update of the nchnroutes configuration.
+
+        ## 📊 Statistics
+        - IPv4 Routes: ${{ steps.build.outputs.ipv4_count }} entries
+        - IPv6 Routes: ${{ steps.build.outputs.ipv6_count }} entries
+        - Build Date: ${{ steps.build.outputs.build_date }}
+        - Build Time: ${{ steps.build.outputs.build_time }}
+
+        ## 📁 Files
+        - routes4.conf: IPv4 routes in BIRD format
+        - routes6.conf: IPv6 routes in BIRD format
+
+        ## ⚠️ Warnings
+        ${{ steps.validate.outputs.warnings }}
+
+        ## 📚 Usage
+        For usage instructions, please refer to the [README](https://github.com/${{ github.repository }}/blob/main/README.md).
+        EOF
+
+        echo "✅ Release notes created!"
+
+    # 第五阶段: 发布路由表
+    # -------------------------------------------------------------------------
+    - name: 📤 Upload to Latest Release
       uses: softprops/action-gh-release@v1
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
+        # 只更新latest标签，方便用户获取最新版本
         tag_name: latest
+        name: "latest"
+        body_path: release_notes.md
         files: |
           ./routes4.conf
           ./routes6.conf
-          
+        draft: false
+        prerelease: false
+
+
+  # 清理任务
+  # ---------------------------------------------------------------------------
   del_runs:
+    name: 🧹 Clean Up Workflow Runs
+    needs: build  # 只有在build成功后才执行
     runs-on: ubuntu-latest
     permissions:
       actions: write
+
     steps:
-      - name: Delete workflow runs
+      - name: 🗑️ Delete Old Workflow Runs
         uses: Mattraks/delete-workflow-runs@v2
         with:
           token: ${{ github.token }}
           repository: ${{ github.repository }}
-          retain_days: 1
-          keep_minimum_runs: 6
+          retain_days: 7       # 保留7天的运行记录
+          keep_minimum_runs: 10 # 至少保留10次运行记录
