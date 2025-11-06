@@ -67,6 +67,7 @@ jobs:
         fi
 
         # 安装BIRD以进行语法检查
+        sudo apt update
         sudo apt install bird2 -y
 
         # 显示Python版本
