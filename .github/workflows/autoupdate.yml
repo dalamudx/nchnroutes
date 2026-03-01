@@ -83,6 +83,8 @@ jobs:
       id: build
       env:
         PASS_IPS: ${{ secrets.PASS_IPS }}
+        CHINA_IPLIST: ${{ secrets.CHINA_IPLIST }}
+        DELEGATED_APNIC: ${{ secrets.DELEGATED_APNIC }}
       run: |
         echo "🚀 Starting build process..."
 
@@ -109,8 +111,8 @@ jobs:
         }
 
         # 单独重试每个下载任务
-        download_with_retry "https://ftp.apnic.net/stats/apnic/delegated-apnic-latest" "delegated-apnic-latest" || exit 1
-        download_with_retry "https://raw.githubusercontent.com/misakaio/chnroutes2/refs/heads/master/chnroutes.txt" "china_ip_list.txt" || exit 1
+        download_with_retry "${DELEGATED_APNIC}" "delegated-apnic-latest" || exit 1
+        download_with_retry "${CHINA_IPLIST}" "china_ip_list.txt" || exit 1
 
         echo "🔄 Processing downloaded files..."
         sed -i '1,2d' china_ip_list.txt
