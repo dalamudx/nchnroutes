@@ -29,9 +29,19 @@ nchnroutes与chnroutes类似，但它生成的是**非**来自中国大陆的路
 ## 🚀 快速开始
 
 ### 获取预生成的路由表
+#### 推荐做法：
+从右上角Fork仓库，然后开启仓库的GitHub Actions功能，并在仓库设置中找到`secrets and variables`->`Actions`->`Secrets`,添加以下环境变量：
+```
+PASS_IPS：要排除的CIDR列表，多个IP用空格分隔，如：1.1.1.1/32 2.2.1.0/20
+CHINA_IPLIST：中国IP列表地址，如：https://raw.githubusercontent.com/misakaio/chnroutes2/refs/heads/master/chnroutes.txt
+DELEGATED_APNIC：APNIC的委托列表地址，如：https://ftp.apnic.net/stats/apnic/delegated-apnic-latest
+```
 
-最简单的方法是直接从GitHub Releases下载最新的预生成路由表：
+配置完成后，手动触发GitHub Actions中的autoupdate.yml工作流，即可生成路由表。
 
+#### 最简单做法：
+直接从GitHub Releases下载最新的预生成路由表：
+>注意：不推荐这样做，因为本项目设置了一些默认的排除IP，虽然不多，但可能并不适合你的网络环境。
 1. 访问[Releases页面](https://github.com/dalamudx/nchnroutes/releases/tag/latest)
 2. 下载`routes4.conf`（IPv4路由）和`routes6.conf`（IPv6路由）
 3. 将这些文件导入到您的BIRD配置中

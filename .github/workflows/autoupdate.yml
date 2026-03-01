@@ -22,7 +22,7 @@ on:
     branches: [ main, master ]
     paths:
       - 'produce.py'    # 路由生成脚本
-      - 'Makefile'      # 构建配置
+      - '.github/workflows/autoupdate.yml' # 工作流配置
 
   # 手动触发 - 允许通过GitHub Actions界面手动触发
   workflow_dispatch:
@@ -86,27 +86,39 @@ jobs:
       run: |
         echo "🚀 Starting build process..."
 
-        # 添加重试机制，提高构建可靠性
-        max_retries=3
-        retry_count=0
-
-        while [ $retry_count -lt $max_retries ]; do
-          echo "🔄 Build attempt $(($retry_count+1))/$max_retries"
-
-          if make; then
-            echo "✅ Build successful!"
-            break
-          else
-            retry_count=$((retry_count+1))
-            if [ $retry_count -lt $max_retries ]; then
-              echo "⚠️ Build failed, retrying ($retry_count/$max_retries)..."
-              sleep 10
-            else
-              echo "❌ Build failed after $max_retries attempts."
-              exit 1
+        # 定义下载重试函数
+        download_with_retry() {
+          local url=$1
+          local output=$2
+          local max=3
+          local delay=10
+          local attempt=1
+          
+          while [ $attempt -le $max ]; do
+            echo "⬇️ Downloading $output (Attempt $attempt/$max)..."
+            if curl -sSL --connect-timeout 15 --max-time 60 -o "$output" "$url"; then
+              echo "✅ Download $output successful!"
+              return 0
             fi
-          fi
-        done
+            echo "⚠️ Failed to download $output. Retrying in $delay seconds..."
+            sleep $delay
+            attempt=$((attempt + 1))
+          done
+          echo "❌ Failed to download $output after $max attempts."
+          return 1
+        }
+
+        # 单独重试每个下载任务
+        download_with_retry "https://ftp.apnic.net/stats/apnic/delegated-apnic-latest" "delegated-apnic-latest" || exit 1
+        download_with_retry "https://raw.githubusercontent.com/misakaio/chnroutes2/refs/heads/master/chnroutes.txt" "china_ip_list.txt" || exit 1
+
+        echo "🔄 Processing downloaded files..."
+        sed -i '1,2d' china_ip_list.txt
+        
+        echo "🚀 Generating routes..."
+        python3 produce.py --next tun0 --exclude "${PASS_IPS}"
+        
+        echo "✅ Build successful!"
 
         # 记录路由条目数量和构建时间，用于后续步骤
         echo "📊 Counting routes..."
