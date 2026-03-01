@@ -118,7 +118,7 @@ jobs:
         sed -i '1,2d' china_ip_list.txt
         
         echo "🚀 Generating routes..."
-        python3 produce.py --next tun0 --exclude "${PASS_IPS}"
+        python3 produce.py --next tun0 --exclude ${PASS_IPS}
         
         echo "✅ Build successful!"
 
